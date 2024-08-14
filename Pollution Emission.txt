@@ -1,0 +1,279 @@
+import win32com.client as com
+import os
+## Connecting the COM Server => Open a new Vissim Window:
+Vissim = com.Dispatch("Vissim.Vissim.2400")
+# If you have installed multiple Vissim Versions, you can open a specific Vissim version adding the bit Version (32 or 64bit) and Version number
+# Vissim = com.Dispatch("Vissim.Vissim-32.600") # Vissim 6 - 32 bit
+# Vissim = com.Dispatch("Vissim.Vissim-64.600") # Vissim 6 - 64 bit
+# Vissim = com.Dispatch("Vissim.Vissim-32.700") # Vissim 7 - 32 bit
+# Vissim = com.Dispatch("Vissim.Vissim-64.700") # Vissim 7 - 64 bit
+# Vissim = com.Dispatch("Vissim.Vissim-32.800") # Vissim 8 - 32 bit
+# Vissim = com.Dispatch("Vissim.Vissim-64.800") # Vissim 8 - 64 bit
+Path_of_COM_Basic_Commands_network = os.getcwd() #'C:\\Users\\Public\\Documents\\PTV Vision\\PTV Vissim 8\\Examples Training\\COM\\Basic Commands\\'
+## Load a Vissim Network:
+Filename                = os.path.join(Path_of_COM_Basic_Commands_network, '0.7-emission.inpx')
+flag_read_additionally  = False # you can read network(elements) additionally, in this case set "flag_read_additionally" to true
+Vissim.LoadNet(Filename, flag_read_additionally)
+## Load a Layout:
+Filename = os.path.join(Path_of_COM_Basic_Commands_network, '0.7-emission.layx')
+Vissim.LoadLayout(Filename)
+
+
+
+
+
+## import libraries:
+import itertools
+import pandas as pd
+import matplotlib.pyplot as plt
+# Chose Random Seed
+Random_Seed = 42
+Vissim.Simulation.SetAttValue('RandSeed', Random_Seed)
+# Or run the simulation continuous (it stops at breakpoint or end of simulation)
+End_of_simulation = 600 # simulation second [s]
+Vissim.Simulation.SetAttValue('SimPeriod', End_of_simulation)
+# Set maximum speed:
+Vissim.Simulation.SetAttValue('UseMaxSimSpeed', True)
+# Hint: to change the simulation speed use: Vissim.Simulation.SetAttValue('SimSpeed', 10) # 10 => 10 Sim. sec. / s
+#### Emissions (Links)
+All_links = Vissim.Net.Links
+for link in All_links:
+    link.SetAttValue('EmiCalcAct', True)
+## Access to Evaluation objects
+eva_obj = Vissim.Evaluation
+# Enable Write Signal changes data into files:
+eva_obj.SetAttValue('SigChangesWriteFile', True)
+############## Emission_related #########################
+eva_obj.SetAttValue('VehNetPerfCollectData', True)  #Enable Vehicle network performance data collection;
+eva_obj.SetAttValue('LinkResCollectData', True)     #Enable Links data collection;
+#########################################################
+# Dissable some direct outputs:
+eva_obj.SetAttValue('GrTmDistrWriteFile', False)    #Dissable Green Time Distribution
+eva_obj.SetAttValue('VehTravTmRawWriteFile', False) #Dissable Vehicle Travel Time
+# Enable Queue length result evaluation:
+eva_obj.SetAttValue('QueuesCollectData', True)
+## Start the simulation:
+for t in range(End_of_simulation):
+    Vissim.Simulation.RunSingleStep()
+# To stop the simulation:
+Vissim.Simulation.Stop()
+
+
+
+
+
+def readLinkSegmentResults(att_file):
+    data_list = []
+    nece_data = []
+    result = []
+    c = 0
+    count_start = 0
+    count_end = 0
+    with open(att_file) as f:
+        for line in itertools.islice(f, 56, None):       # skip the first 56 lines
+            new_line = line.rstrip().split(';')
+            data_list.append(new_line)
+            if count_start==0 and new_line[0]=='AVG':
+                count_start = c
+            if count_end==0 and new_line[0]=='STDDEV':
+                count_end = c
+            c = c + 1
+    f.close()
+    if count_start == 0 and count_end == 0:
+        count_end = len(data_list) - 1
+    
+    # Extract only necessary data:
+    # AVG
+    extract_list = data_list[count_start : count_end]
+    for i in extract_list:
+        nece_data = [j for k, j in enumerate(i) if k not in [0, 1, 3, 4, 5]]
+        result.append(nece_data)
+    #print(result)
+    df_emission = pd.DataFrame(result, 
+                               columns=['LinkEvalSegment', 'Volume(All)', 'EmissionEvapHC(All)', 'EmissionBen(All)', 'EmissionsCO(All)', 
+                                        'EmissionsCO2(All)', 'EmissionsHC(All)', 'EmissionsNMHC(All)', 'EmissionsNMOG(All)', 'EmissionsNOx(All)', 
+                                        'EmissionsParticulates(All)', 'EmiSO2', 'EmiSoot', 'Emi224', 'EmiCH4', 'EmiEleC', 'EmiEthBen', 'EmiMTBE',
+                                        'EmiN2O', 'EmiNH3', 'EmiNO3', 'EmiPM10b', 'EmiPM10t', 'EmiPM10tot', 'EmiPM25b', 'EmiPM25t', 'EmiPM25tot', 
+                                        'EmiSulP', 'EmiTOG', 'EmiTol', 'EmiVOC', 'EmiXyl', 'FuelComp', 'Emi13BUT', 'EmiFor', 'EmiAce', 'EmiHex',
+                                        'EmiNap'])
+    
+    return df_emission
+def getlink1210007(df_emission, target_idx):
+    select_idx = []
+    for idx in df_emission.index:
+        new_list = df_emission['LinkEvalSegment'][idx].split('-')
+        if new_list[0] in target_idx:
+            select_idx.append(idx)
+
+    df_select = df_emission.iloc[select_idx]
+    return df_select
+
+def getX(df_emission):
+    x = []
+    for idx in df_emission.index:
+        x.append(float(df_emission['Volume(All)'][idx]))
+
+    return x
+
+def getY(df_emission):
+    agg_emi = 0
+    y = []
+    columns = df_emission.columns
+    for idx in df_emission.index:
+        for i in range(2, len(columns)):
+            agg_emi = agg_emi + float(df_emission[columns[i]][idx])
+        y.append(agg_emi)
+        agg_emi = 0
+return y
+df_emission = readLinkSegmentResults('0.7-emission_Link Segment Results.att')
+print(df_emission)
+#target_idx = ['1', '2', '4', '7', '9', '11', '12', '14', '17', '18', '19', '20']
+#df_select = getlink1210007(df_emission, target_idx)
+#print(df_select)
+x = getX(df_emission)
+y = getY(df_emission)
+print(x)
+plt.plot(x, y, 'o', markersize=1)
+plt.xlabel('Link Occupancy (Veh/h)')
+plt.ylabel('Aggregate Emissions (grams/h)')
+plt.title('Scatter plot of link occupancy vs. aggregate emissions')
+plt.show()
+x2 = getX(df_select)
+y2 = getY(df_select)
+plt.plot(x2, y2, 'o', markersize=3)
+plt.xlabel('(selected)Link Occupancy (Veh/h)')
+plt.ylabel('Aggregate Emissions (grams/h)')
+plt.title('Scatter plot of selected link occupancy vs. aggregate emissions')
+plt.show()
+
+
+
+
+
+
+
+
+### Eliminate outliers using Interquartile Range Method (IQR) (a typical method used by majority)
+import numpy as np
+num_y = np.array(y)
+Q1 = np.quantile(num_y, 0.25)
+Q3 = np.quantile(num_y, 0.75)
+IQR = Q3 - Q1
+## Identify outliers:
+outliers = [(index, num) for index, num in enumerate(y) if ((num<(Q1-1.5*IQR)) | (num>(Q3+1.5*IQR)))]
+outliers_index = [i[0] for i in outliers]
+outliers_num = [i[1] for i in outliers]
+#print(outliers)
+#print(outliers_num)
+#print(outliers_index)
+#print(len(outliers_num))
+## Remove outliers from original y-list:
+good_y = [i for i in y if i not in outliers_num]
+#print(len(good_y))
+## Remove corresponding x from original x-list:
+good_x = []
+for index, num in enumerate(x):
+    if index not in outliers_index:
+        good_x.append(num)
+#print(good_x)
+
+## Plot after eliminating outliers:
+plt.plot(good_x, good_y, 'o', markersize=1)
+plt.xlabel('Link Occupancy (Veh/h)')
+plt.ylabel('Aggregate Emissions (grams/h)')
+plt.title('Scatter plot after eliminating outliers')
+plt.show()
+
+### Eliminate outliers using z-scores (z-score>3)(a typical method used by majority)
+num_y_2 = np.array(y)
+
+mean = np.mean(num_y_2)
+std = np.std(num_y_2)
+threshold = 3
+outliers2 = []
+for index, num in enumerate(num_y_2):
+    z = (num - mean) / std
+    if z > threshold:
+        outliers2.append((index, num))
+outliers2_index = [i[0] for i in outliers2]
+outliers2_num = [i[1] for i in outliers2]
+
+## Remove outliers from original y-list:
+good_y2 = [i for i in y if i not in outliers2_num]
+
+## Remove corresponding x from original x-list:
+good_x2 = []
+for index, num in enumerate(x):
+    if index not in outliers2_index:
+        good_x2.append(num)
+#print(good_x)
+
+## Plot after eliminating outliers:
+plt.plot(good_x2, good_y2, 'o', markersize=1)
+plt.xlabel('Link Occupancy (Veh/h)')
+plt.ylabel('Aggregate Emissions (grams/h)')
+plt.title('Scatter plot after eliminating outliers2')
+plt.show()
+
+### Linear regression after IQR method (sklearn)
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+np_x_all = np.array(x).reshape(-1, 1)
+np_y_all = np.array(y).reshape(-1, 1)
+
+np_x = np.array(good_x).reshape(-1, 1)
+np_y = np.array(good_y).reshape(-1, 1)
+
+reg = LinearRegression().fit(np_x, np_y)
+coef = reg.coef_[0][0]
+intercept = reg.intercept_[0]
+print(coef)
+print(intercept)
+print('The linear regression function is:\n', 'y =',coef,'* x +', intercept)
+
+## Plot with linear regression:
+xseq = np.linspace(0, 1750)
+y_pred = intercept+coef*np_x
+## Evaluate the regression:
+r2 =  r2_score(np_y, y_pred)
+print('The R2 is:\n', r2)
+
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.scatter(x, y, s=3)
+ax.plot(xseq, intercept+coef*xseq, color='orange', lw=1)
+ax.set_xlabel('Link Occupancy (Veh/h)')
+ax.set_ylabel('Aggregate Emissions (grams/h)')
+ax.legend(['Original','R2:{}'.format(r2)])
+fig.suptitle('Linear regression (IQR method)')
+
+plt.show()
+
+### Linear regression after z-score method (sklearn)
+
+np_x2 = np.array(good_x2).reshape(-1, 1)
+np_y2 = np.array(good_y2).reshape(-1, 1)
+
+reg2 = LinearRegression().fit(np_x2, np_y2)
+coef2 = reg2.coef_[0][0]
+intercept2 = reg2.intercept_[0]
+print(coef2)
+print(intercept2)
+print('The linear regression function is:\n', 'y =',coef2,'* x +', intercept2)
+
+## Plot with linear regression:
+xseq = np.linspace(0, 1750)
+y_pred2 = intercept2+coef2*np_x2
+## Evaluate the regression:
+r22 =  r2_score(np_y2, y_pred2)
+print('The R2 is:\n', r22)
+
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.scatter(x, y, s=3)
+ax.plot(xseq, intercept2+coef2*xseq, color='orange', lw=1)
+ax.set_xlabel('Link Occupancy (Veh/h)')
+ax.set_ylabel('Aggregate Emissions (grams/h)')
+ax.legend(['Original','R2:{}'.format(r22)])
+fig.suptitle('Linear regression (z-score method)')
+plt.show()
