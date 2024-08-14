@@ -1,0 +1,681 @@
+import win32com.client as com
+import os
+## Connecting the COM Server => Open a new Vissim Window:
+Vissim = com.Dispatch("Vissim.Vissim.2400")
+# If you have installed multiple Vissim Versions, you can open a specific Vissim version adding the bit Version (32 or 64bit) and Version number
+# Vissim = com.Dispatch("Vissim.Vissim-32.600") # Vissim 6 - 32 bit
+# Vissim = com.Dispatch("Vissim.Vissim-64.600") # Vissim 6 - 64 bit
+# Vissim = com.Dispatch("Vissim.Vissim-32.700") # Vissim 7 - 32 bit
+# Vissim = com.Dispatch("Vissim.Vissim-64.700") # Vissim 7 - 64 bit
+# Vissim = com.Dispatch("Vissim.Vissim-32.800") # Vissim 8 - 32 bit
+# Vissim = com.Dispatch("Vissim.Vissim-64.800") # Vissim 8 - 64 bit
+Path_of_COM_Basic_Commands_network = os.getcwd() #'C:\\Users\\Public\\Documents\\PTV Vision\\PTV Vissim 8\\Examples Training\\COM\\Basic Commands\\'
+## Load a Vissim Network:
+Filename                = os.path.join(Path_of_COM_Basic_Commands_network, '0.7.inpx')
+flag_read_additionally  = False # you can read network(elements) additionally, in this case set "flag_read_additionally" to true
+Vissim.LoadNet(Filename, flag_read_additionally)
+## Load a Layout:
+Filename = os.path.join(Path_of_COM_Basic_Commands_network, '0.7.layx')
+Vissim.LoadLayout(Filename)
+
+
+
+
+
+## import libraries:
+
+import itertools
+import pandas as pd
+import matplotlib.pyplot as plt
+
+### To change detector, identify the detector(Port No.) you want to use, 
+### things need to be changed: mydet_portno, .lsa file name
+### and then locate the signal controller, signal group, and signal head.
+
+# Chose Random Seed
+
+Random_Seed = 42
+Vissim.Simulation.SetAttValue('RandSeed', Random_Seed)
+
+# Or run the simulation continuous (it stops at breakpoint or end of simulation)
+End_of_simulation = 600 # simulation second [s]
+Vissim.Simulation.SetAttValue('SimPeriod', End_of_simulation)
+
+# Set maximum speed:
+Vissim.Simulation.SetAttValue('UseMaxSimSpeed', True)
+# Hint: to change the simulation speed use: Vissim.Simulation.SetAttValue('SimSpeed', 10) # 10 => 10 Sim. sec. / s
+
+# Increase vehicle volume: (high volume to create congestion)
+# volume: 2500
+#All_vehinputs = Vissim.Net.VehicleInputs
+#for v in All_vehinputs:
+#    v.SetAttValue('Volume(1)', 2000)
+
+mydet_portno = 71                                   # [to change detector, adjust this line!!]
+## Set the detector to the target one(e.g. detector_PortNo.48):
+All_detectors = Vissim.Net.Detectors.GetAll()       # get all detectors in the network
+# Set the target detector to detector_PortNo.48: 
+for cnt_det in range(len(All_detectors)):
+    det_portno = All_detectors[cnt_det].AttValue('PortNo')
+    if det_portno == mydet_portno:
+        target_det = All_detectors[cnt_det]
+
+target_det_lane = target_det.AttValue('Lane')       # get target detector's link_lane;
+target_det_L = target_det.AttValue('Pos')           # get target detector's distance;
+target_det_len = target_det.AttValue('Length')
+if target_det_lane[0].isdigit() and target_det_lane[1].isdigit():
+    link_str = target_det_lane[0] + target_det_lane[1]
+else:
+    link_str = target_det_lane[0]
+link_no = int(link_str)
+lane_no = int(target_det_lane[len(target_det_lane)-1])
+print('\nDetector link:', link_no, ', lane:', lane_no)
+
+## According to the target_det_lane, obtain the signal head associated with the same link_lane:
+All_signalheads = Vissim.Net.SignalHeads.GetAll()   # get all signal heads in the network
+for cnt_sh in range(len(All_signalheads)):
+    sh_lane = All_signalheads[cnt_sh].AttValue('Lane')
+    if sh_lane == target_det_lane:
+        target_sh = All_signalheads[cnt_sh]
+
+sh_L = target_sh.AttValue('Pos')                    # get signal head distance (sh_L):
+sh_sg = target_sh.AttValue('SG')                    # get the target signal controller and signal group;
+
+## Calculate Ld:
+# Ld: [unit: ft]
+Ld = abs(sh_L - target_det_L) - target_det_len
+print('\nLd =', Ld)
+
+## Add a queue counter to link in the network and assign it to 'queuecounter':
+All_links = Vissim.Net.Links
+link = All_links.ItemByKey(link_no)                 # get link object;
+link_len = link.AttValue('Length2D')                # get link length;
+
+if not Vissim.Net.QueueCounters.ItemKeyExists(1):
+    Vissim.Net.QueueCounters.AddQueueCounter(1, link, link_len)
+    queuecounter = Vissim.Net.QueueCounters.ItemByKey(1)
+else:
+    Vissim.Net.QueueCounters.RemoveQueueCounter(Vissim.Net.QueueCounters.ItemByKey(1))
+    Vissim.Net.QueueCounters.AddQueueCounter(1, link, link_len)
+    queuecounter = Vissim.Net.QueueCounters.ItemByKey(1)
+
+
+## Get signal controller no and signal group no:
+if sh_sg[0].isdigit() and sh_sg[1].isdigit():
+    sc_str = sh_sg[0] + sh_sg[1]
+else:
+    sc_str = sh_sg[0]
+sc_key = int(sc_str)
+
+sg_key = int(sh_sg[len(sh_sg)-1])
+
+print('\nSignal controller is', sc_key, ', Signal group is', sg_key)
+
+## Set the objects of signal controllers and detector:
+SignalCtrls = Vissim.Net.SignalControllers
+sc = SignalCtrls.ItemByKey(sc_key)               
+
+SignalGroups = sc.SGs              # get Signal Groups 
+sg = SignalGroups.ItemByKey(sg_key)    
+
+## Access to Evaluation objects
+eva_obj = Vissim.Evaluation
+
+# Enable Write Signal changes data into files:
+eva_obj.SetAttValue('SigChangesWriteFile', True)
+# Dissable some direct outputs:
+eva_obj.SetAttValue('GrTmDistrWriteFile', False)    #Dissable Green Time Distribution
+eva_obj.SetAttValue('VehTravTmRawWriteFile', False) #Dissable Vehicle Travel Time
+# Enable Queue length result evaluation:
+eva_obj.SetAttValue('QueuesCollectData', True)
+eva_obj.SetAttValue('QueueConsiderAdjacentLanes', False)
+eva_obj.SetAttValue('QueuesFromTime', 0)
+eva_obj.SetAttValue('QueuesInterval', 1)
+eva_obj.SetAttValue('QueuesToTime', End_of_simulation)
+
+
+All_det_occupancy = []                          # Store detector occupancy time during the simulation;
+All_veh_list = []                               # Store all vehicle's info in link1-lane4 into a list;
+All_vehNum = []                                 # Store num of vehs reach the detector;
+last_present = 0
+last_actuation_endtime = None
+last_actuation_starttime = None
+timegaps = []                                   # Store timegaps of 2 vehicles passing the detector;
+
+Tot_All_veh_list = []
+All_queueLens = []
+All_queueLensMax = []                           # Store PTV Vissim simulated max queue length;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Start the simulation:
+for t in range(End_of_simulation):
+    Vissim.Simulation.RunSingleStep()
+    All_Vehicles = Vissim.Net.Vehicles.GetAll() # get all vehicles in the network at the actual simulation second
+    All_veh_list = []
+    # get vehicles in target_det_lane at this simulation second:
+    for cnt_Veh in range(len(All_Vehicles)):
+        veh_number      = All_Vehicles[cnt_Veh].AttValue('No')
+        veh_type        = All_Vehicles[cnt_Veh].AttValue('VehType')
+        veh_speed       = All_Vehicles[cnt_Veh].AttValue('Speed')
+        veh_position    = All_Vehicles[cnt_Veh].AttValue('Pos')
+        veh_linklane    = All_Vehicles[cnt_Veh].AttValue('Lane')
+        if veh_linklane == target_det_lane:
+            veh_list = [veh_number, veh_type, veh_speed, veh_position, veh_linklane]
+            All_veh_list.append(veh_list)
+    if All_veh_list != []:
+        df_veh = pd.DataFrame(All_veh_list, columns=['No', 'VehType', 'Speed', 'Pos', 'Lane'])
+        print('\nSimulation time ='+str(t)+'\n', df_veh)
+        Tot_All_veh_list.append([t, All_veh_list])
+        All_veh_list = []
+    else:
+        Tot_All_veh_list.append([t, []])
+        
+    # get detetor occupancy time [unit: s]:
+    det_occ_time = target_det.AttValue('Occ')
+    All_det_occupancy.append(det_occ_time)
+
+    # get num of vehicles reached the detector within timestep:
+    vehNum = target_det.AttValue('VehNo')
+    All_vehNum.append(vehNum)
+
+    # get timegaps [unit: s]:
+    current_time = Vissim.Simulation.SimulationSecond
+    isPresent = target_det.AttValue('Presence')     # [type: float]
+    if isPresent == None:
+        isPresent = 0.0
+    if last_present>0 and isPresent==0:             # Indicate the end of last actuation event
+        last_actuation_endtime = current_time
+    elif last_present==0 and isPresent>0:           # Indicate the start of next actuation event
+        last_actuation_starttime = current_time
+        if last_actuation_endtime is not None:
+            gap = current_time - last_actuation_endtime
+            last_actuation_endtime = None
+    
+    if last_actuation_endtime is not None and last_actuation_starttime is not None:
+        gap = current_time - last_actuation_endtime
+    else:
+        gap = 0.0
+    
+    timegaps.append(gap)
+    last_present = isPresent
+    #print(gap)
+
+    curr_queueLen = queuecounter.AttValue('QLen(Current, 1)')
+    All_queueLens.append(curr_queueLen)
+
+    curr_queueLenMax = queuecounter.AttValue('QLenMax(Current, 1)')
+    All_queueLensMax.append(curr_queueLenMax)
+
+# To stop the simulation:
+Vissim.Simulation.Stop()
+#timegaps.append(None)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Function to get n:
+def getVehicleNum(cyc_no, df_Att, All_vehNum):
+    VehCount = 0
+    line = df_Att.loc[df_Att['Cyc No']==cyc_no]
+    if line.empty:
+        return VehCount
+    TC = float(line.iloc[0]['TC'])
+    line_prev = df_Att.loc[df_Att['Cyc No']==cyc_no-1]
+    if line_prev.empty:
+        Tg = cyc_no * 60.0
+        unq_veh = set(All_vehNum[int(Tg):int(TC)])
+        for i in unq_veh:
+            if i != 0:
+                VehCount = VehCount + 1
+    else:
+        Tg = float(line_prev.iloc[0]['Tg of next cyc'])
+        unq_veh = set(All_vehNum[int(Tg):int(TC)])
+        for i in unq_veh:
+            if i != 0:
+                VehCount = VehCount + 1
+
+    return VehCount
+
+# Function to calculate v2:
+def V_2(cyc_no, df_Att, Ld):
+    line = df_Att.loc[df_Att['Cyc No']==cyc_no]
+    Tr = float(line.iloc[0]['Tr'])
+    TB = float(line.iloc[0]['TB'])
+
+    v2 = Ld / (TB - Tr)
+
+    return v2
+
+# Function to calculate Lmax:
+def maxQueLen(n, kj, Ld):
+    Lmax = (n / kj) + Ld
+
+    return Lmax
+
+# Function to calculate Tmax:
+def maxQueTime(cyc_no, df_Att, Lmax, v2):
+    line = df_Att.loc[df_Att['Cyc No']==cyc_no]
+    Tr = float(line.iloc[0]['Tr'])
+    Tmax = Tr + Lmax / v2
+
+    return Tmax
+
+# Function to calculate v3:
+def V_3(cyc_no, df_Att, Lmax, Ld, Tmax):
+    line = df_Att.loc[df_Att['Cyc No']==cyc_no]
+    TC = float(line.iloc[0]['TC'])
+
+    v3 = (Lmax - Ld)/(TC - Tmax)
+    return v3
+
+# Function to calculate v1:
+def V_1(cyc_no, df_Att, Lmax, Ld, Tmax):
+    line = df_Att.loc[df_Att['Cyc No']==cyc_no]
+    TA = float(line.iloc[0]['TA'])
+
+    v1 = (Lmax - Ld)/(Tmax - TA)
+    return v1
+
+# Function to calculate Lmin:
+def minQueLen(cyc_no, df_Att, Lmax, Tmax, v3, v4):
+    line = df_Att.loc[df_Att['Cyc No']==cyc_no]
+    Tg = float(line.iloc[0]['Tg of next cyc'])
+
+    Lmin = (Lmax/v3+Tmax-Tg)/(1/v3+1/v4)
+    return Lmin
+
+# Function to calculate Tmin:
+def minQueTime(cyc_no, df_Att, Lmin, v4):
+    line = df_Att.loc[df_Att['Cyc No']==cyc_no]
+    Tg = float(line.iloc[0]['Tg of next cyc'])
+    
+    Tmin = Tg + Lmin/v4
+return Tmin
+
+
+
+
+
+
+
+
+
+
+
+
+
+    ## Detector port no.440, link2, lane3, signal group2
+## Every 60s is a cycle
+## Signal head SC-SG 10-2
+
+
+data_list = []
+## Signal changes are saved in file .lsa: [!!Use latest version!!]
+# Read Signal changes data into DataFrame: df:
+sc_results = '0.7_001.lsa'
+with open(sc_results) as f:
+    for line in itertools.islice(f, 156, None):       # skip the first 156 lines
+        new_line = line.replace(' ', '').rstrip().split(';')
+        last = new_line.pop()
+        data_list.append(new_line)
+f.close()
+
+df = pd.DataFrame(data_list, columns=['Simulation Sec', 'Cycle time', 'SC Num', 'SG Num', 'New Signal State', 'Last Duration', 'SC Type', 'SG Change'])
+#print('\nSignal Changes DataFrame:\n', df)
+
+# Extract SC Num=10 & SG Num=2:
+sc_1_df = df.loc[df['SC Num']==str(sc_key)]
+sc1_sg2_df = sc_1_df.loc[df['SG Num']==str(sg_key)]
+print('\nSC10SG2_Signal changes\n', sc1_sg2_df)
+
+# How many signal type:
+st_list = set(sc1_sg2_df['New Signal State'].tolist())
+st_num = len(st_list)
+if 'Red' in st_list:
+    green_end_state = 'Red'
+else:
+    green_end_state = 'red/amber'
+
+All_cycles = []                 # Store Tr, Tg, TA, TB, TC in each cycle;
+All_signal_state = []
+isEqual = False
+# Extract Tr and Tg for each cycle:
+for c in range(int(End_of_simulation/60.0)):
+    df_cycle = sc1_sg2_df[c*st_num:(c+1)*st_num]
+    print('\nCycle'+str(c)+'\n', df_cycle)
+    Tr = df_cycle.loc[df_cycle['New Signal State']=='green'].iloc[0]['Simulation Sec']
+    Tg = df_cycle.loc[df_cycle['New Signal State']==green_end_state].iloc[0]['Simulation Sec']
+    if float(Tg) < float(Tr):
+        Tr = float(Tr) - 60
+    print('\nGreen phase start (Tr):\n', str(Tr))
+    print('\nGreen phase end (Tg of next cycle):\n',Tg)
+
+    if float(Tr) == float(c*60):
+        isEqual = True
+
+    signal_state = [c, Tr, Tg]
+    All_signal_state.append(signal_state)
+
+df_signal_state = pd.DataFrame(All_signal_state, columns=['Cyc No', 'Tr', 'Tg of next cyc'])
+
+if isEqual:
+    for c in range(1, int(End_of_simulation/60.0)):
+        Tg_last = df_signal_state.iloc[c-1]['Tg of next cyc']
+        Tr = df_signal_state.iloc[c]['Tr']
+        Tg_next = df_signal_state.iloc[c]['Tg of next cyc']
+
+        print('\nCycle'+str(c)+'\n')
+        print('\nLast Green phase end (Tg of last cycle):\n',Tg_last)
+        print('\nGreen phase start (Tr):\n', str(Tr))
+        print('\nGreen phase end (Tg of next cycle):\n',Tg_next)
+
+        # Plot Detector occupancy time per cycle:
+        fig, axs = plt.subplots(2, 1)
+        axs[0].plot(range(int(float(Tg_last)), int(float(Tg_next))), All_det_occupancy[int(float(Tg_last)): int(float(Tg_next))])
+        axs[0].set_title('Detector occupancy time')
+    
+        # Plot time gap per cycle:
+        axs[1].plot(range(int(float(Tg_last)), int(float(Tg_next))), timegaps[int(float(Tg_last)): int(float(Tg_next))])
+        axs[1].set_title('timegap')
+    
+        plt.show()
+
+        # Identify TA:
+        IsTA = False
+        IsTB = False
+        IsTC = False
+        for i in range(len(All_det_occupancy[int(float(Tg_last)):int(float(Tr))])):
+            t = All_det_occupancy[int(float(Tg_last)):int(float(Tr))][i]
+            if t > 3.0:
+                #print(t)
+                TA = float(int(float(Tg_last))+i)
+                print('\nTA is \n', TA)
+                IsTA = True
+                break
+        if not IsTA:
+            print('No TA! Use short queue method')
+        # Identify TB:
+        if IsTA:
+            for i in range(len(All_det_occupancy[int(float(Tr)):int(float(Tg_next))])):
+                t = All_det_occupancy[int(float(Tr)):int(float(Tg_next))][i]
+                if t < 3.0:
+                    #print(t)
+                    TB = float(float(Tr)+i)
+                    if TB == float(Tr):
+                        print('No TB, not real long queue.')
+                    else:
+                        print('\nTB is \n', TB)
+                        IsTB = True
+                    break
+            #Identify of TC:
+            if IsTB:
+                for i in range(len(timegaps[int(TB):int(float(Tg_next))])):
+                    t = timegaps[int(TB):int(float(Tg_next))][i]
+                    if t >= 2.5:
+                        print(t)
+                        TC = float(TB+i)
+                        print('\nTC is \n', TC)
+                        IsTC = True
+                        break
+                if not IsTC:
+                    print('No TC!')
+                if IsTC:
+                    Attributes_per_cycle = [c, Tr, Tg_next, TA, TB, TC]
+                    All_cycles.append(Attributes_per_cycle)
+else:
+    for c in range(int(End_of_simulation/60.0)): 
+        Tr = df_signal_state.iloc[c]['Tr']
+        Tg_next = df_signal_state.iloc[c]['Tg of next cyc']
+
+        print('\nCycle'+str(c)+'\n')
+        print('\nGreen phase start (Tr):\n', str(Tr))
+        print('\nGreen phase end (Tg of next cycle):\n',Tg_next)
+        
+        # Plot Detector occupancy time per cycle:
+        fig, axs = plt.subplots(2, 1)
+        axs[0].plot(range(c*60, (c+1)*60), All_det_occupancy[c*60:(c+1)*60])
+        axs[0].set_title('Detector occupancy time')
+    
+        # Plot time gap per cycle:
+        axs[1].plot(range(c*60, (c+1)*60), timegaps[c*60:(c+1)*60])
+        axs[1].set_title('timegap')
+    
+        plt.show()
+
+        # Identify TA:
+        IsTA = False
+        IsTB = False
+        IsTC = False
+        for i in range(len(All_det_occupancy[c*60:int(float(Tr))])):
+            t = All_det_occupancy[c*60:int(float(Tr))][i]
+            if t > 3.0:
+                #print(t)
+                TA = float(c*60+i)
+                print('\nTA is \n', TA)
+                IsTA = True
+                break
+        if not IsTA:
+            print('No TA! Use short queue method')
+        # Identify TB:
+        if IsTA:
+            for i in range(len(All_det_occupancy[int(float(Tr)):(c+1)*60])):
+                t = All_det_occupancy[int(float(Tr)):(c+1)*60][i]
+                if t == None:
+                    t = All_det_occupancy[int(float(Tr)):(c+1)*60][i-1]
+                if t < 3.0:
+                    #print(t)
+                    TB = float(float(Tr)+i)
+                    if TB == float(Tr):
+                        print('No TB, not real long queue.')
+                    else:
+                        print('\nTB is \n', TB)
+                        IsTB = True
+                    break
+            #Identify of TC:
+            if IsTB:
+                for i in range(len(timegaps[int(TB):(c+1)*60])):
+                    t = timegaps[int(TB):(c+1)*60][i]
+                    if t >= 2.5:
+                        print(t)
+                        TC = float(TB+i)
+                        print('\nTC is \n', TC)
+                        IsTC = True
+                        break
+                if not IsTC:
+                    print('No TC!')
+                if IsTC:
+                    Attributes_per_cycle = [c, Tr, Tg_next, TA, TB, TC]
+                    All_cycles.append(Attributes_per_cycle)
+df_Att = pd.DataFrame(All_cycles, columns=['Cyc No', 'Tr', 'Tg of next cyc', 'TA', 'TB', 'TC'])
+print(df_Att)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Queue length estimations:
+## length unit: ft; time unit: s
+
+# jam density kj
+kj = 0.086
+
+All_results = []
+
+if df_Att.empty:
+    print('\nQueues are too short, model not applicable.')
+else:
+    for cyc_no in df_Att['Cyc No'].tolist():
+        print('Cycle ', cyc_no)
+        n = getVehicleNum(cyc_no, df_Att, All_vehNum)
+        print('vehicle num', n)
+        v2 = V_2(cyc_no, df_Att, Ld)
+        print('\nv2 = \n', v2)
+        v4 = v2
+    
+        Lmax = maxQueLen(n, kj, Ld)
+        print('\nMax Queue Length = \n', Lmax)
+    
+        Tmax = maxQueTime(cyc_no, df_Att, Lmax, v2)
+        print('\nMax Queue Length Time = \n', Tmax)
+    
+        v3 = V_3(cyc_no, df_Att, Lmax, Ld, Tmax)
+        print('\nv3 = \n', v3)
+
+        v1 = V_1(cyc_no, df_Att, Lmax, Ld, Tmax)
+        print('\nv1 = \n', v1)
+
+        Lmin = minQueLen(cyc_no, df_Att, Lmax, Tmax, v3, v4)
+        if Lmin < 0.0:
+            Lmin = 0.0
+        print('\nMin Queue Length = \n', Lmin)
+    
+        Tmin = minQueTime(cyc_no, df_Att, Lmin, v4)
+        print('\nMin Queue Length Time = \n', Tmin)
+
+        results_per_cycle = [cyc_no, Lmax, Tmax, Lmin, Tmin]
+        All_results.append(results_per_cycle)
+
+    df_result = pd.DataFrame(All_results, columns=['Cyc Num', 'Lmax', 'Tmax', 'Lmin', 'Tmin'])
+print(df_result)
+
+def getQueueLen(Tot_All_veh_list, link_len):
+    result_list = []
+    for i in range(len(Tot_All_veh_list)):
+        item = Tot_All_veh_list[i]
+        simSec = item[0]
+        if item[1] == []:
+            curr_queue_len = 0.0
+        else:
+            All_veh_list = item[1]
+            df_veh = pd.DataFrame(All_veh_list, columns=['No', 'VehType', 'Speed', 'Pos', 'Lane'])
+            re_df_veh = df_veh.sort_values(by='Pos')
+            re_df_veh = re_df_veh.reset_index(drop=True)
+            print(re_df_veh)
+            end_index = 0
+            count = 0
+            for idx in re_df_veh.index:
+                speed = float(re_df_veh['Speed'][idx])
+                if idx != (len(re_df_veh.index)-1):
+                    maxclear = float(re_df_veh['Pos'][idx+1])-float(re_df_veh['Pos'][idx])
+                else:
+                    maxclear = link_len - float(re_df_veh['Pos'][idx])
+                if speed <= 5.0 and maxclear < 32:                   # a vehicle is considered in queue if its speed is less than 5.0 mph,;
+                    if count == 0:
+                        end_index = idx 
+                        print(type(end_index))# and the distance between previous vehicle is less than 32 ft
+                    count = count + 1
+                if count == 0:
+                    curr_queue_len = 0.0
+                elif count>0:
+                    print(len(re_df_veh.index))
+                    if int(end_index)+count == int(len(re_df_veh.index)):
+                        curr_queue_len = link_len - float(re_df_veh['Pos'][end_index])
+                    else:
+                        start_index = end_index+count-1
+                        curr_queue_len = float(re_df_veh['Pos'][start_index]) - float(re_df_veh['Pos'][end_index])
+                else:
+                    curr_queue_len = 0.0
+            print('count',count)
+            print('end index',end_index)
+        result_list.append(curr_queue_len)
+        print(curr_queue_len)
+
+    return result_list
+
+queue_len_vissim = getQueueLen(Tot_All_veh_list, link_len)
+print(queue_len_vissim)
+
+from matplotlib.axis import Axis
+import matplotlib.ticker as ticker
+
+# Get PTV Vissim simulated max queue lengths in each cycle:
+def getMaxQLenPerCycle(queue_len_vissim, cycle):
+    maxLen_list = []
+    for i in range(0, len(queue_len_vissim), cycle):
+        slice = queue_len_vissim[i : (i+cycle)]
+        max_value = max(slice)
+        #max_value = sum(slice)/len(slice)
+        maxLen_list.append(max_value)
+
+    return maxLen_list
+
+# Plot maximum queue length comparison:
+def plotMaxLenCompare(maxLen_list, df_result):
+    new_maxLen_list = []
+    new_df_result = []
+    for c in df_result['Cyc Num']:
+        new_maxLen_list.append(maxLen_list[c])
+        new_df_result.append(df_result.loc[df_result['Cyc Num']==c].iloc[0]['Lmax'])
+
+    fig, ax = plt.subplots(1,1)
+    ax.plot(df_result['Cyc Num'].tolist(), new_maxLen_list, label='Simulation', marker='o')
+    ax.plot(df_result['Cyc Num'].tolist(), new_df_result, label='Estimation', marker='s')
+
+    ax.set_xlabel('Number of Cycle')
+    ax.set_ylabel('Max Queue Length (ft)')
+    fig.suptitle('Max queue length comparison')
+    ax.set_ylim(0, max(max(new_maxLen_list), max(new_df_result))+50)
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+    ax.legend()
+
+    plt.show()
+
+# Calculate mean absolute percentage error:
+def calMeanAbPerError(maxLen_list, df_result):
+    sum = 0
+    for c in df_result['Cyc Num']:
+        observation = maxLen_list[c]
+        estimation = df_result.loc[df_result['Cyc Num']==c].iloc[0]['Lmax']
+        sum = sum + abs((observation-estimation) / observation)
+
+    mape = sum / len(df_result['Cyc Num'].tolist())
+
+    return mape * 100
+maxLen_list = getMaxQLenPerCycle(queue_len_vissim, 60)
+print(maxLen_list)
+
+plotMaxLenCompare(maxLen_list, df_result)
+
+percentage_error = calMeanAbPerError(maxLen_list, df_result)
+print('\nPercentage error is', percentage_error, '%')
+
+
+
+
+
